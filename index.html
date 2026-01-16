@@ -4,216 +4,268 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Spotify Genre Ranker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        :root {
-            --spotify-green: #1DB954;
-            --bg-color: #121212;
-            --card-bg: #181818;
-            --text-color: #ffffff;
-        }
-
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-color);
-            color: var(--text-color);
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
+            background-color: #121212;
+            color: #ffffff;
+            font-family: 'Inter', sans-serif;
         }
-
-        h1 { color: var(--spotify-green); }
-
-        #login-btn {
-            background-color: var(--spotify-green);
-            color: black;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 30px;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 16px;
-            transition: transform 0.2s;
+        .spotify-green { color: #1DB954; }
+        .bg-spotify-green { background-color: #1DB954; }
+        .genre-card {
+            background-color: #181818;
+            transition: transform 0.2s ease;
         }
-
-        #login-btn:hover { transform: scale(1.05); }
-
-        .genre-container {
-            width: 100%;
-            max-width: 800px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            margin-top: 30px;
+        .genre-card:hover {
+            background-color: #282828;
+            transform: translateY(-2px);
         }
-
-        .genre-block {
-            background-color: var(--card-bg);
-            padding: 20px;
-            border-radius: 8px;
-            border-left: 5px solid var(--spotify-green);
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #1DB954;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
         }
-
-        .genre-title {
-            font-size: 1.5em;
-            text-transform: capitalize;
-            margin-bottom: 10px;
-            display: flex;
-            justify-content: space-between;
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
-
-        .count-badge {
-            font-size: 0.6em;
-            background: #333;
-            padding: 5px 10px;
-            border-radius: 12px;
-        }
-
-        .track-list {
-            list-style: none;
-            padding: 0;
-        }
-
-        .track-item {
-            margin: 5px 0;
-        }
-
-        .track-link {
-            color: #b3b3b3;
-            text-decoration: none;
-            transition: color 0.2s;
-        }
-
-        .track-link:hover {
-            color: var(--spotify-green);
-            text-decoration: underline;
-        }
-
-        #status { margin-top: 10px; color: #b3b3b3; }
     </style>
 </head>
-<body>
+<body class="min-h-screen p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-12">
+            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span></h1>
+            <p class="text-gray-400">Analise suas músicas salvas e descubra seus gêneros mais raros e comuns.</p>
+        </header>
 
-    <h1>Spotify Genre Ranker</h1>
-    <p>Descubra quais gêneros predominam na sua biblioteca (e quais são raros).</p>
-    
-    <button id="login-btn">Conectar com Spotify</button>
-    <div id="status"></div>
-    <div id="results" class="genre-container"></div>
+        <div id="auth-section" class="flex flex-col items-center justify-center gap-4">
+            <button id="login-btn" class="bg-spotify-green text-black font-bold py-3 px-8 rounded-full hover:scale-105 transition-transform shadow-lg shadow-green-900/20">
+                Conectar com Spotify
+            </button>
+            
+            <div class="mt-4 p-4 bg-gray-900 rounded-lg text-sm text-gray-400 border border-gray-800 max-w-md text-center">
+                <p class="mb-2 font-semibold text-white">Configuração Obrigatória:</p>
+                <p class="mb-2">Adicione a URL abaixo nas "Redirect URIs" do seu app no Spotify Dashboard:</p>
+                <code id="redirect-display" class="block bg-black p-2 rounded text-green-400 break-all select-all cursor-text">...</code>
+            </div>
+            
+            <div id="error-message" class="hidden text-red-400 bg-red-900/20 p-3 rounded border border-red-900 mt-2"></div>
+        </div>
+
+        <div id="loading-section" class="hidden flex-col items-center gap-4 py-12">
+            <div class="loader"></div>
+            <p id="loading-text" class="text-lg">Conectando...</p>
+        </div>
+
+        <div id="results-section" class="hidden">
+            <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
+                <h2 class="text-2xl font-semibold">Seu Ranking</h2>
+                <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full"></span>
+            </div>
+            
+            <div id="genres-list" class="space-y-6">
+                <!-- Blocos de gêneros serão inseridos aqui -->
+            </div>
+        </div>
+    </div>
 
     <script>
-        const clientId = '3408b10d569b40cf8fe0ae4b56fe0c27'; 
-        const redirectUri = window.location.href.split('#')[0].split('?')[0]; 
-        const scopes = 'user-library-read';
+        // --- CONFIGURAÇÃO ---
+        const CLIENT_ID = '3408b10d569b40cf8fe0ae4b56fe0c27';
+        // Remove hash e query params para obter a URL base limpa
+        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        const SCOPES = 'user-library-read';
 
+        // Elementos DOM
+        const authSection = document.getElementById('auth-section');
+        const loadingSection = document.getElementById('loading-section');
+        const resultsSection = document.getElementById('results-section');
+        const loadingText = document.getElementById('loading-text');
+        const genresList = document.getElementById('genres-list');
         const loginBtn = document.getElementById('login-btn');
-        const statusTxt = document.getElementById('status');
-        const resultsDiv = document.getElementById('results');
+        const redirectDisplay = document.getElementById('redirect-display');
+        const errorMsg = document.getElementById('error-message');
 
-        // 1. Lógica de Autenticação
-        loginBtn.addEventListener('click', () => {
-            const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}`;
+        // Inicialização
+        window.onload = () => {
+            // Mostra a URL que o usuário deve cadastrar
+            redirectDisplay.innerText = REDIRECT_URI;
+
+            // Verifica se está rodando localmente de forma correta
+            if (window.location.protocol === 'file:') {
+                showError("ERRO: O Spotify não funciona com arquivos abertos diretamente (file://). Você precisa usar um servidor local (ex: localhost:5500).");
+                loginBtn.disabled = true;
+                loginBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                return;
+            }
+
+            // Processa o retorno do Spotify
+            const hash = getHashParams();
+            const query = getQueryParams();
+
+            if (query.error) {
+                showError(`Erro retornado pelo Spotify: ${query.error}`);
+                return;
+            }
+
+            if (hash.access_token) {
+                // Limpa a URL para ficar bonita
+                window.history.pushState("", document.title, window.location.pathname + window.location.search);
+                startAnalysis(hash.access_token);
+            }
+        };
+
+        // Função para pegar params do hash (#access_token=...)
+        function getHashParams() {
+            return window.location.hash.substring(1).split('&').reduce((initial, item) => {
+                if (item) {
+                    let parts = item.split('=');
+                    initial[parts[0]] = decodeURIComponent(parts[1]);
+                }
+                return initial;
+            }, {});
+        }
+
+        // Função para pegar params da query (?error=...)
+        function getQueryParams() {
+            return window.location.search.substring(1).split('&').reduce((initial, item) => {
+                if (item) {
+                    let parts = item.split('=');
+                    initial[parts[0]] = decodeURIComponent(parts[1]);
+                }
+                return initial;
+            }, {});
+        }
+
+        function showError(msg) {
+            errorMsg.innerText = msg;
+            errorMsg.classList.remove('hidden');
+        }
+
+        loginBtn.onclick = () => {
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&show_dialog=true`;
             window.location.href = authUrl;
-        });
+        };
 
-        // Verificar se retornou do Spotify com o token
-        const hash = window.location.hash.substring(1).split('&').reduce((initial, item) => {
-            if (item) {
-                var parts = item.split('=');
-                initial[parts[0]] = decodeURIComponent(parts[1]);
+        async function fetchWithRetry(url, token, retries = 5, backoff = 1000) {
+            for (let i = 0; i < retries; i++) {
+                try {
+                    const response = await fetch(url, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    
+                    if (response.status === 401) {
+                        throw new Error("Token expirado ou inválido. Recarregue a página.");
+                    }
+
+                    if (response.ok) return await response.json();
+                    if (response.status !== 429 && response.status < 500) break;
+                } catch (e) {
+                    if (e.message.includes("Token")) throw e;
+                }
+                await new Promise(resolve => setTimeout(resolve, backoff));
+                backoff *= 2;
             }
-            return initial;
-        }, {});
-
-        if (hash.access_token) {
-            window.location.hash = ''; // Limpa a URL
-            loginBtn.style.display = 'none';
-            fetchSavedTracks(hash.access_token);
+            throw new Error('Falha ao conectar com a API do Spotify.');
         }
 
-        // 2. Buscar músicas salvas
-        async function fetchSavedTracks(token) {
-            statusTxt.innerText = "Buscando suas músicas salvas...";
+        async function startAnalysis(token) {
+            authSection.classList.add('hidden');
+            loadingSection.classList.remove('hidden');
+            errorMsg.classList.add('hidden');
+            
             try {
-                // Buscamos as últimas 50 músicas (limite da API por request)
-                const response = await fetch('https://api.spotify.com/v1/me/tracks?limit=50', {
-                    headers: { 'Authorization': `Bearer ${token}` }
+                // 1. Buscar músicas salvas
+                loadingText.innerText = "Buscando suas músicas salvas...";
+                // Aumentei o limite para garantir mais dados
+                const tracksData = await fetchWithRetry('https://api.spotify.com/v1/me/tracks?limit=50', token);
+                const items = tracksData.items;
+
+                if (!items || items.length === 0) {
+                    loadingText.innerText = "Nenhuma música encontrada na sua biblioteca.";
+                    return;
+                }
+
+                document.getElementById('total-tracks').innerText = `${items.length} últimas músicas`;
+
+                // 2. Coletar IDs de artistas
+                const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
+                
+                // 3. Buscar gêneros
+                loadingText.innerText = "Analisando gêneros...";
+                const artistsResponse = await fetchWithRetry(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, token);
+                const artists = artistsResponse.artists;
+
+                const artistGenreMap = {};
+                artists.forEach(artist => {
+                    artistGenreMap[artist.id] = artist.genres;
                 });
-                const data = await response.json();
-                processGenres(data.items, token);
-            } catch (err) {
-                statusTxt.innerText = "Erro ao carregar dados.";
-                console.error(err);
+
+                // 4. Calcular Ranking
+                const genreStats = {}; 
+
+                items.forEach(item => {
+                    const track = item.track;
+                    const mainArtistId = track.artists[0].id;
+                    const genres = artistGenreMap[mainArtistId] || [];
+
+                    if (genres.length === 0) {
+                        const unknown = "Sem Gênero Definido";
+                        if (!genreStats[unknown]) genreStats[unknown] = [];
+                        genreStats[unknown].push(track);
+                    } else {
+                        genres.forEach(genre => {
+                            if (!genreStats[genre]) genreStats[genre] = [];
+                            genreStats[genre].push(track);
+                        });
+                    }
+                });
+
+                // 5. Ordenar (Menos frequente -> Mais frequente)
+                const sortedGenres = Object.keys(genreStats).sort((a, b) => {
+                    return genreStats[a].length - genreStats[b].length;
+                });
+
+                // 6. Renderizar
+                loadingSection.classList.add('hidden');
+                resultsSection.classList.remove('hidden');
+                genresList.innerHTML = ''; // Limpa lista anterior
+
+                sortedGenres.forEach(genreName => {
+                    const tracks = genreStats[genreName];
+                    const genreDiv = document.createElement('div');
+                    genreDiv.className = 'genre-card p-6 rounded-xl border border-gray-800';
+                    
+                    genreDiv.innerHTML = `
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="text-xl font-bold capitalize text-white">${genreName}</h3>
+                            <span class="bg-spotify-green text-black text-xs font-black px-2 py-1 rounded">
+                                ${tracks.length} PT${tracks.length > 1 ? 'S' : 'O'}
+                            </span>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            ${tracks.map(t => `
+                                <a href="${t.external_urls.spotify}" target="_blank" class="text-sm text-gray-400 hover:text-white flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors">
+                                    <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
+                                    <span class="truncate font-medium">${t.name}</span>
+                                    <span class="text-xs text-gray-600 truncate">• ${t.artists[0].name}</span>
+                                </a>
+                            `).join('')}
+                        </div>
+                    `;
+                    genresList.appendChild(genreDiv);
+                });
+
+            } catch (error) {
+                console.error(error);
+                loadingSection.classList.add('hidden');
+                authSection.classList.remove('hidden');
+                showError(`Erro: ${error.message}`);
             }
-        }
-
-        // 3. Processar gêneros através dos artistas
-        async function processGenres(items, token) {
-            statusTxt.innerText = "Analisando gêneros dos artistas...";
-            
-            const genreMap = {}; // { genreName: [trackObjects] }
-            const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
-
-            // A API de Tracks não traz o gênero, precisamos consultar os artistas
-            // Buscamos em blocos de 50 artistas
-            const artistsData = await fetch(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            const { artists } = await artistsData.json();
-
-            // Mapeia IDs de artistas para seus gêneros
-            const artistGenreLookup = {};
-            artists.forEach(a => { artistGenreLookup[a.id] = a.genres; });
-
-            // Distribui as músicas nos gêneros
-            items.forEach(item => {
-                const track = item.track;
-                const genres = artistGenreLookup[track.artists[0].id] || ["Gênero Desconhecido"];
-                
-                genres.forEach(genre => {
-                    if (!genreMap[genre]) genreMap[genre] = [];
-                    genreMap[genre].push(track);
-                });
-            });
-
-            renderResults(genreMap);
-        }
-
-        // 4. Renderizar o ranking
-        function renderResults(genreMap) {
-            statusTxt.innerText = "Ranking gerado!";
-            
-            // Transformar em array e ordenar (Menos frequentes para Mais frequentes)
-            const sortedGenres = Object.keys(genreMap).sort((a, b) => {
-                return genreMap[a].length - genreMap[b].length;
-            });
-
-            resultsDiv.innerHTML = '';
-            
-            sortedGenres.forEach(genre => {
-                const block = document.createElement('div');
-                block.className = 'genre-block';
-                
-                const tracksHtml = genreMap[genre].map(t => `
-                    <li class="track-item">
-                        <a href="${t.external_urls.spotify}" target="_blank" class="track-link">
-                            ${t.name} - <strong>${t.artists[0].name}</strong>
-                        </a>
-                    </li>
-                `).join('');
-
-                block.innerHTML = `
-                    <div class="genre-title">
-                        ${genre} 
-                        <span class="count-badge">${genreMap[genre].length} música(s)</span>
-                    </div>
-                    <ul class="track-list">
-                        ${tracksHtml}
-                    </ul>
-                `;
-                resultsDiv.appendChild(block);
-            });
         }
     </script>
 </body>
