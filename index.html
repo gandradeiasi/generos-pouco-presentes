@@ -49,7 +49,7 @@
             
             <div class="mt-4 p-4 bg-gray-900 rounded-lg text-sm text-gray-400 border border-gray-800 max-w-md text-center">
                 <p class="mb-2 font-semibold text-white">Configuração Obrigatória:</p>
-                <p class="mb-2">Certifique-se que esta URL está nas "Redirect URIs" do seu app no Spotify:</p>
+                <p class="mb-2">Certifique-se que esta URL EXATA está nas "Redirect URIs" do seu app no Spotify:</p>
                 <code id="redirect-display" class="block bg-black p-2 rounded text-green-400 break-all select-all cursor-text">...</code>
             </div>
             
@@ -75,10 +75,20 @@
 
     <script>
         // --- CONFIGURAÇÃO ---
-        // IMPORTANTE: Neste fluxo moderno (PKCE), NÃO precisamos do Client Secret. Apenas o ID.
-        const CLIENT_ID = '982368a9f414404798fef187660515e7'; // <--- COLE SEU NOVO ID AQUI
+        const CLIENT_ID = '982368a9f414404798fef187660515e7';
         
-        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        // --- CÁLCULO INTELIGENTE DA REDIRECT URI ---
+        // Remove 'index.html' se presente e garante que termina com '/'
+        // Isso evita erros de "Invalid Redirect URI" se o usuário acessar via url completa
+        let cleanPath = window.location.pathname;
+        if (cleanPath.endsWith('index.html')) {
+            cleanPath = cleanPath.replace('index.html', '');
+        }
+        if (!cleanPath.endsWith('/')) {
+            cleanPath += '/';
+        }
+        const REDIRECT_URI = window.location.origin + cleanPath;
+        
         const SCOPES = 'user-library-read';
 
         // Elementos DOM
@@ -137,7 +147,7 @@
             localStorage.setItem('spotify_code_verifier', codeVerifier);
 
             const authUrl = new URL('https://accounts.spotify.com/authorize');
-            authUrl.searchParams.append('response_type', 'code'); // Agora usamos CODE, não TOKEN
+            authUrl.searchParams.append('response_type', 'code');
             authUrl.searchParams.append('client_id', CLIENT_ID);
             authUrl.searchParams.append('scope', SCOPES);
             authUrl.searchParams.append('redirect_uri', REDIRECT_URI);
@@ -153,6 +163,13 @@
             loadingText.innerText = "Autenticando com segurança...";
 
             const codeVerifier = localStorage.getItem('spotify_code_verifier');
+
+            if (!codeVerifier) {
+                showError("Erro: Verificador de código não encontrado. Tente recarregar a página e fazer login novamente.");
+                loadingSection.classList.add('hidden');
+                authSection.classList.remove('hidden');
+                return;
+            }
 
             try {
                 const response = await fetch('https://accounts.spotify.com/api/token', {
