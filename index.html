@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotify Genre Ranker</title>
+    <style>
+        :root {
+            --spotify-green: #1DB954;
+            --bg-color: #121212;
+            --card-bg: #181818;
+            --text-color: #ffffff;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { color: var(--spotify-green); }
+
+        #login-btn {
+            background-color: var(--spotify-green);
+            color: black;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 30px;
+            font-weight: bold;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.2s;
+        }
+
+        #login-btn:hover { transform: scale(1.05); }
+
+        .genre-container {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .genre-block {
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: 8px;
+            border-left: 5px solid var(--spotify-green);
+        }
+
+        .genre-title {
+            font-size: 1.5em;
+            text-transform: capitalize;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .count-badge {
+            font-size: 0.6em;
+            background: #333;
+            padding: 5px 10px;
+            border-radius: 12px;
+        }
+
+        .track-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .track-item {
+            margin: 5px 0;
+        }
+
+        .track-link {
+            color: #b3b3b3;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .track-link:hover {
+            color: var(--spotify-green);
+            text-decoration: underline;
+        }
+
+        #status { margin-top: 10px; color: #b3b3b3; }
+    </style>
+</head>
+<body>
+
+    <h1>Spotify Genre Ranker</h1>
+    <p>Descubra quais gêneros predominam na sua biblioteca (e quais são raros).</p>
+    
+    <button id="login-btn">Conectar com Spotify</button>
+    <div id="status"></div>
+    <div id="results" class="genre-container"></div>
+
+    <script>
+        const clientId = '3408b10d569b40cf8fe0ae4b56fe0c27'; 
+        const redirectUri = window.location.href.split('#')[0].split('?')[0]; 
+        const scopes = 'user-library-read';
+
+        const loginBtn = document.getElementById('login-btn');
+        const statusTxt = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+
+        // 1. Lógica de Autenticação
+        loginBtn.addEventListener('click', () => {
+            const authUrl = `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=token&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopes)}`;
+            window.location.href = authUrl;
+        });
+
+        // Verificar se retornou do Spotify com o token
+        const hash = window.location.hash.substring(1).split('&').reduce((initial, item) => {
+            if (item) {
+                var parts = item.split('=');
+                initial[parts[0]] = decodeURIComponent(parts[1]);
+            }
+            return initial;
+        }, {});
+
+        if (hash.access_token) {
+            window.location.hash = ''; // Limpa a URL
+            loginBtn.style.display = 'none';
+            fetchSavedTracks(hash.access_token);
+        }
+
+        // 2. Buscar músicas salvas
+        async function fetchSavedTracks(token) {
+            statusTxt.innerText = "Buscando suas músicas salvas...";
+            try {
+                // Buscamos as últimas 50 músicas (limite da API por request)
+                const response = await fetch('https://api.spotify.com/v1/me/tracks?limit=50', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await response.json();
+                processGenres(data.items, token);
+            } catch (err) {
+                statusTxt.innerText = "Erro ao carregar dados.";
+                console.error(err);
+            }
+        }
+
+        // 3. Processar gêneros através dos artistas
+        async function processGenres(items, token) {
+            statusTxt.innerText = "Analisando gêneros dos artistas...";
+            
+            const genreMap = {}; // { genreName: [trackObjects] }
+            const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
+
+            // A API de Tracks não traz o gênero, precisamos consultar os artistas
+            // Buscamos em blocos de 50 artistas
+            const artistsData = await fetch(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            const { artists } = await artistsData.json();
+
+            // Mapeia IDs de artistas para seus gêneros
+            const artistGenreLookup = {};
+            artists.forEach(a => { artistGenreLookup[a.id] = a.genres; });
+
+            // Distribui as músicas nos gêneros
+            items.forEach(item => {
+                const track = item.track;
+                const genres = artistGenreLookup[track.artists[0].id] || ["Gênero Desconhecido"];
+                
+                genres.forEach(genre => {
+                    if (!genreMap[genre]) genreMap[genre] = [];
+                    genreMap[genre].push(track);
+                });
+            });
+
+            renderResults(genreMap);
+        }
+
+        // 4. Renderizar o ranking
+        function renderResults(genreMap) {
+            statusTxt.innerText = "Ranking gerado!";
+            
+            // Transformar em array e ordenar (Menos frequentes para Mais frequentes)
+            const sortedGenres = Object.keys(genreMap).sort((a, b) => {
+                return genreMap[a].length - genreMap[b].length;
+            });
+
+            resultsDiv.innerHTML = '';
+            
+            sortedGenres.forEach(genre => {
+                const block = document.createElement('div');
+                block.className = 'genre-block';
+                
+                const tracksHtml = genreMap[genre].map(t => `
+                    <li class="track-item">
+                        <a href="${t.external_urls.spotify}" target="_blank" class="track-link">
+                            ${t.name} - <strong>${t.artists[0].name}</strong>
+                        </a>
+                    </li>
+                `).join('');
+
+                block.innerHTML = `
+                    <div class="genre-title">
+                        ${genre} 
+                        <span class="count-badge">${genreMap[genre].length} música(s)</span>
+                    </div>
+                    <ul class="track-list">
+                        ${tracksHtml}
+                    </ul>
+                `;
+                resultsDiv.appendChild(block);
+            });
+        }
+    </script>
+</body>
+</html>
