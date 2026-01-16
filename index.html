@@ -49,7 +49,7 @@
             
             <div class="mt-4 p-4 bg-gray-900 rounded-lg text-sm text-gray-400 border border-gray-800 max-w-md text-center">
                 <p class="mb-2 font-semibold text-white">Configuração Obrigatória:</p>
-                <p class="mb-2">Adicione a URL abaixo nas "Redirect URIs" do seu app no Spotify Dashboard:</p>
+                <p class="mb-2">Certifique-se que esta URL está nas "Redirect URIs" do seu app no Spotify:</p>
                 <code id="redirect-display" class="block bg-black p-2 rounded text-green-400 break-all select-all cursor-text">...</code>
             </div>
             
@@ -75,8 +75,9 @@
 
     <script>
         // --- CONFIGURAÇÃO ---
-        const CLIENT_ID = '3408b10d569b40cf8fe0ae4b56fe0c27';
-        // Remove hash e query params para obter a URL base limpa
+        // IMPORTANTE: Neste fluxo moderno (PKCE), NÃO precisamos do Client Secret. Apenas o ID.
+        const CLIENT_ID = '982368a9f414404798fef187660515e7'; // <--- COLE SEU NOVO ID AQUI
+        
         const REDIRECT_URI = window.location.origin + window.location.pathname;
         const SCOPES = 'user-library-read';
 
@@ -90,55 +91,95 @@
         const redirectDisplay = document.getElementById('redirect-display');
         const errorMsg = document.getElementById('error-message');
 
-        // Inicialização
-        window.onload = () => {
-            // Mostra a URL que o usuário deve cadastrar
+        // --- FUNÇÕES DE AUTH PKCE (MODERNO E SEGURO) ---
+
+        function generateRandomString(length) {
+            let text = '';
+            let possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            for (let i = 0; i < length; i++) {
+                text += possible.charAt(Math.floor(Math.random() * possible.length));
+            }
+            return text;
+        }
+
+        async function generateCodeChallenge(codeVerifier) {
+            function base64url(string) {
+                return btoa(String.fromCharCode.apply(null, new Uint8Array(string)))
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/, '');
+            }
+            const encoder = new TextEncoder();
+            const data = encoder.encode(codeVerifier);
+            const digest = await window.crypto.subtle.digest('SHA-256', data);
+            return base64url(digest);
+        }
+
+        // --- FLUXO PRINCIPAL ---
+
+        window.onload = async () => {
             redirectDisplay.innerText = REDIRECT_URI;
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
 
-            // Verifica se está rodando localmente de forma correta
-            if (window.location.protocol === 'file:') {
-                showError("ERRO: O Spotify não funciona com arquivos abertos diretamente (file://). Você precisa usar um servidor local (ex: localhost:5500).");
-                loginBtn.disabled = true;
-                loginBtn.classList.add('opacity-50', 'cursor-not-allowed');
-                return;
-            }
-
-            // Processa o retorno do Spotify
-            const hash = getHashParams();
-            const query = getQueryParams();
-
-            if (query.error) {
-                showError(`Erro retornado pelo Spotify: ${query.error}`);
-                return;
-            }
-
-            if (hash.access_token) {
-                // Limpa a URL para ficar bonita
-                window.history.pushState("", document.title, window.location.pathname + window.location.search);
-                startAnalysis(hash.access_token);
+            // Se tiver código na URL, troca pelo Token
+            if (code) {
+                window.history.pushState("", document.title, window.location.pathname); // Limpa URL
+                await exchangeCodeForToken(code);
             }
         };
 
-        // Função para pegar params do hash (#access_token=...)
-        function getHashParams() {
-            return window.location.hash.substring(1).split('&').reduce((initial, item) => {
-                if (item) {
-                    let parts = item.split('=');
-                    initial[parts[0]] = decodeURIComponent(parts[1]);
-                }
-                return initial;
-            }, {});
-        }
+        loginBtn.onclick = async () => {
+            const codeVerifier = generateRandomString(128);
+            const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-        // Função para pegar params da query (?error=...)
-        function getQueryParams() {
-            return window.location.search.substring(1).split('&').reduce((initial, item) => {
-                if (item) {
-                    let parts = item.split('=');
-                    initial[parts[0]] = decodeURIComponent(parts[1]);
+            // Salva o verifier para usar depois do redirect
+            localStorage.setItem('spotify_code_verifier', codeVerifier);
+
+            const authUrl = new URL('https://accounts.spotify.com/authorize');
+            authUrl.searchParams.append('response_type', 'code'); // Agora usamos CODE, não TOKEN
+            authUrl.searchParams.append('client_id', CLIENT_ID);
+            authUrl.searchParams.append('scope', SCOPES);
+            authUrl.searchParams.append('redirect_uri', REDIRECT_URI);
+            authUrl.searchParams.append('code_challenge_method', 'S256');
+            authUrl.searchParams.append('code_challenge', codeChallenge);
+
+            window.location.href = authUrl.toString();
+        };
+
+        async function exchangeCodeForToken(code) {
+            authSection.classList.add('hidden');
+            loadingSection.classList.remove('hidden');
+            loadingText.innerText = "Autenticando com segurança...";
+
+            const codeVerifier = localStorage.getItem('spotify_code_verifier');
+
+            try {
+                const response = await fetch('https://accounts.spotify.com/api/token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams({
+                        client_id: CLIENT_ID,
+                        grant_type: 'authorization_code',
+                        code: code,
+                        redirect_uri: REDIRECT_URI,
+                        code_verifier: codeVerifier,
+                    }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error_description || 'Falha na troca do token');
                 }
-                return initial;
-            }, {});
+
+                const data = await response.json();
+                startAnalysis(data.access_token);
+
+            } catch (err) {
+                showError("Erro na autenticação: " + err.message);
+                loadingSection.classList.add('hidden');
+                authSection.classList.remove('hidden');
+            }
         }
 
         function showError(msg) {
@@ -146,10 +187,7 @@
             errorMsg.classList.remove('hidden');
         }
 
-        loginBtn.onclick = () => {
-            const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&show_dialog=true`;
-            window.location.href = authUrl;
-        };
+        // --- LÓGICA DE DADOS (Igual à anterior) ---
 
         async function fetchWithRetry(url, token, retries = 5, backoff = 1000) {
             for (let i = 0; i < retries; i++) {
@@ -157,13 +195,8 @@
                     const response = await fetch(url, {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
-                    
-                    if (response.status === 401) {
-                        throw new Error("Token expirado ou inválido. Recarregue a página.");
-                    }
-
                     if (response.ok) return await response.json();
-                    if (response.status !== 429 && response.status < 500) break;
+                    if (response.status === 401) throw new Error("Token expirado.");
                 } catch (e) {
                     if (e.message.includes("Token")) throw e;
                 }
@@ -174,44 +207,34 @@
         }
 
         async function startAnalysis(token) {
-            authSection.classList.add('hidden');
-            loadingSection.classList.remove('hidden');
-            errorMsg.classList.add('hidden');
-            
             try {
-                // 1. Buscar músicas salvas
                 loadingText.innerText = "Buscando suas músicas salvas...";
-                // Aumentei o limite para garantir mais dados
+                // Pega 50 músicas
                 const tracksData = await fetchWithRetry('https://api.spotify.com/v1/me/tracks?limit=50', token);
                 const items = tracksData.items;
 
                 if (!items || items.length === 0) {
-                    loadingText.innerText = "Nenhuma música encontrada na sua biblioteca.";
+                    loadingText.innerText = "Nenhuma música encontrada.";
                     return;
                 }
 
                 document.getElementById('total-tracks').innerText = `${items.length} últimas músicas`;
 
-                // 2. Coletar IDs de artistas
-                const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
-                
-                // 3. Buscar gêneros
+                // Pega Artistas
                 loadingText.innerText = "Analisando gêneros...";
+                const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
                 const artistsResponse = await fetchWithRetry(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, token);
-                const artists = artistsResponse.artists;
-
+                
                 const artistGenreMap = {};
-                artists.forEach(artist => {
+                artistsResponse.artists.forEach(artist => {
                     artistGenreMap[artist.id] = artist.genres;
                 });
 
-                // 4. Calcular Ranking
+                // Calcula Ranking
                 const genreStats = {}; 
-
                 items.forEach(item => {
                     const track = item.track;
-                    const mainArtistId = track.artists[0].id;
-                    const genres = artistGenreMap[mainArtistId] || [];
+                    const genres = artistGenreMap[track.artists[0].id] || [];
 
                     if (genres.length === 0) {
                         const unknown = "Sem Gênero Definido";
@@ -225,15 +248,14 @@
                     }
                 });
 
-                // 5. Ordenar (Menos frequente -> Mais frequente)
+                // Ordena e Renderiza
                 const sortedGenres = Object.keys(genreStats).sort((a, b) => {
                     return genreStats[a].length - genreStats[b].length;
                 });
 
-                // 6. Renderizar
                 loadingSection.classList.add('hidden');
                 resultsSection.classList.remove('hidden');
-                genresList.innerHTML = ''; // Limpa lista anterior
+                genresList.innerHTML = '';
 
                 sortedGenres.forEach(genreName => {
                     const tracks = genreStats[genreName];
