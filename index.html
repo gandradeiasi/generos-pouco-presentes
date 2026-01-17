@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Genre Ranker - Rarest First + Exclusions</title>
+    <title>Spotify Genre Ranker - Full Features</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -17,10 +17,7 @@
             background-color: #181818;
             transition: transform 0.2s ease;
         }
-        .genre-card:hover {
-            background-color: #282828;
-            transform: translateY(-2px);
-        }
+        /* Loader */
         .loader {
             border: 4px solid #f3f3f3;
             border-top: 4px solid #1DB954;
@@ -33,22 +30,14 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #121212; }
-        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #1DB954; }
-
-        /* Estilo do botão de remover */
-        .remove-btn {
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-        .track-row:hover .remove-btn {
-            opacity: 1;
+        
+        /* Modal Styles */
+        #confirmation-modal {
+            backdrop-filter: blur(5px);
         }
     </style>
 </head>
-<body class="min-h-screen p-4 md:p-8">
+<body class="min-h-screen p-4 md:p-8 relative">
     <div class="max-w-4xl mx-auto">
         <header class="text-center mb-12">
             <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span></h1>
@@ -59,13 +48,11 @@
             <button id="login-btn" class="bg-spotify-green text-black font-bold py-3 px-8 rounded-full hover:scale-105 transition-transform shadow-lg shadow-green-900/20">
                 Conectar com Spotify
             </button>
-            
             <div class="mt-4 p-4 bg-gray-900 rounded-lg text-sm text-gray-400 border border-gray-800 max-w-md text-center">
                 <p class="mb-2 font-semibold text-white">Configuração Obrigatória:</p>
                 <p class="mb-2">Certifique-se que esta URL EXATA está nas "Redirect URIs" do seu app no Spotify:</p>
                 <code id="redirect-display" class="block bg-black p-2 rounded text-green-400 break-all select-all cursor-text">...</code>
             </div>
-            
             <div id="error-message" class="hidden text-red-400 bg-red-900/20 p-3 rounded border border-red-900 mt-2"></div>
         </div>
 
@@ -76,15 +63,31 @@
 
         <div id="results-section" class="hidden">
             <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4 sticky top-0 bg-[#121212] z-10 py-4">
-                <h2 class="text-2xl font-semibold">Seu Ranking (Crescente)</h2>
+                <h2 class="text-2xl font-semibold">Seu Ranking</h2>
                 <div>
                     <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full mr-2"></span>
-                    <button onclick="clearExclusions()" class="text-xs text-red-400 hover:text-red-300 underline">Resetar Exclusões</button>
+                    <button onclick="clearExclusions()" class="text-xs text-red-400 hover:text-red-300 underline">Resetar</button>
                 </div>
             </div>
-            
-            <div id="genres-list" class="space-y-6">
-                </div>
+            <div id="genres-list" class="space-y-6"></div>
+        </div>
+    </div>
+
+    <div id="confirmation-modal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+        <div class="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-sm w-full shadow-2xl">
+            <h3 class="text-xl font-bold mb-2">Confirmar Remoção</h3>
+            <p class="text-gray-300 mb-6">
+                Deseja remover a música <span id="modal-track-name" class="font-bold text-white"></span> 
+                do gênero <span id="modal-genre-name" class="font-bold text-spotify-green"></span>?
+            </p>
+            <div class="flex gap-3 justify-end">
+                <button onclick="closeModal()" class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition-colors">
+                    Cancelar
+                </button>
+                <button id="confirm-remove-btn" class="px-4 py-2 text-sm font-bold bg-red-600 hover:bg-red-700 text-white rounded-full transition-colors">
+                    Remover
+                </button>
+            </div>
         </div>
     </div>
 
@@ -100,6 +103,9 @@
         const SCOPES = 'user-library-read';
         const EXCLUSION_KEY = 'spotify_ranker_exclusions';
 
+        // --- VARIÁVEIS DE ESTADO DO MODAL ---
+        let currentRemovalData = null;
+
         // Elementos DOM
         const authSection = document.getElementById('auth-section');
         const loadingSection = document.getElementById('loading-section');
@@ -109,8 +115,14 @@
         const loginBtn = document.getElementById('login-btn');
         const redirectDisplay = document.getElementById('redirect-display');
         const errorMsg = document.getElementById('error-message');
+        
+        // Elementos Modal
+        const modal = document.getElementById('confirmation-modal');
+        const modalTrackName = document.getElementById('modal-track-name');
+        const modalGenreName = document.getElementById('modal-genre-name');
+        const confirmRemoveBtn = document.getElementById('confirm-remove-btn');
 
-        // --- SISTEMA DE EXCLUSÃO (LOCAL STORAGE) ---
+        // --- SISTEMA DE EXCLUSÃO ---
         
         function getExclusions() {
             const stored = localStorage.getItem(EXCLUSION_KEY);
@@ -119,33 +131,61 @@
 
         function addExclusion(trackId, genreName) {
             const exclusions = getExclusions();
-            const key = `${trackId}|${genreName}`; // Chave única composta
+            const key = `${trackId}|${genreName}`;
             exclusions.add(key);
             localStorage.setItem(EXCLUSION_KEY, JSON.stringify([...exclusions]));
-            console.log(`Excluído: ${key}`);
         }
 
         function clearExclusions() {
-            if(confirm('Isso vai restaurar todas as músicas que você removeu dos gêneros. Deseja continuar?')) {
+            if(confirm('Isso restaurará todas as músicas removidas. Continuar?')) {
                 localStorage.removeItem(EXCLUSION_KEY);
                 location.reload();
             }
         }
 
-        // Função chamada pelo botão na UI
-        window.removeTrack = (trackId, genreName, btnElement) => {
+        // --- LÓGICA DO MODAL ---
+
+        window.openModal = (trackId, trackName, genreName, btnElement) => {
+            currentRemovalData = { trackId, genreName, btnElement };
+            
+            modalTrackName.innerText = trackName;
+            modalGenreName.innerText = genreName;
+            
+            modal.classList.remove('hidden');
+        };
+
+        window.closeModal = () => {
+            modal.classList.add('hidden');
+            currentRemovalData = null;
+        };
+
+        confirmRemoveBtn.onclick = () => {
+            if (!currentRemovalData) return;
+            
+            const { trackId, genreName, btnElement } = currentRemovalData;
+            
             // 1. Salva no storage
             addExclusion(trackId, genreName);
 
-            // 2. Remove visualmente a linha
+            // 2. Manipulação do DOM
             const row = btnElement.closest('.track-row');
             const card = btnElement.closest('.genre-card');
+            
+            // Remove a linha da música
             row.remove();
 
-            // 3. Atualiza o contador visualmente
+            // Atualiza contador
             const counterEl = card.querySelector('.genre-count');
             let currentCount = parseInt(counterEl.innerText);
-            counterEl.innerText = Math.max(0, currentCount - 1);
+            let newCount = Math.max(0, currentCount - 1);
+            counterEl.innerText = newCount;
+
+            // 3. Se contagem chegar a 0, remove o card inteiro
+            if (newCount === 0) {
+                card.remove();
+            }
+
+            closeModal();
         };
 
         // --- AUTH (PKCE) ---
@@ -310,9 +350,7 @@
 
         async function startAnalysis(token) {
             try {
-                // Carregar exclusões salvas
                 const exclusions = getExclusions();
-
                 const items = await fetchAllTracks(token);
                 
                 if (items.length === 0) {
@@ -341,11 +379,9 @@
                         }
                     });
 
-                    // Helper para processar adição
                     const processGenre = (genreName) => {
-                        // VERIFICAÇÃO DE EXCLUSÃO
                         const key = `${track.id}|${genreName}`;
-                        if (exclusions.has(key)) return; // Pula se estiver na lista negra
+                        if (exclusions.has(key)) return; 
 
                         if (!genreStats[genreName]) genreStats[genreName] = [];
                         genreStats[genreName].push(track);
@@ -369,45 +405,49 @@
 
                 sortedGenres.forEach(genreName => {
                     const tracks = genreStats[genreName];
-                    if (tracks.length === 0) return; // Não exibe se todas as músicas foram excluídas
+                    
+                    // LÓGICA: Se o gênero tiver 0 músicas (após exclusão), não renderiza
+                    if (tracks.length === 0) return;
 
                     const genreDiv = document.createElement('div');
                     genreDiv.className = 'genre-card p-6 rounded-xl border border-gray-800';
                     
                     const displayTracks = tracks.slice(0, 20); 
                     const hasMore = tracks.length > 20;
-
-                    // Escapa aspas simples para não quebrar o JS inline
-                    const safeGenreName = genreName.replace(/'/g, "\\'");
+                    
+                    // Escapes para segurança ao passar strings no HTML
+                    const safeGenreName = genreName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
                     genreDiv.innerHTML = `
                         <div class="flex justify-between items-start mb-4">
                             <h3 class="text-xl font-bold capitalize text-white">${genreName}</h3>
-                            <span class="bg-spotify-green text-black text-xs font-black px-2 py-1 rounded genre-count">
+                            <span class="genre-count bg-spotify-green text-black text-xs font-black px-2 py-1 rounded">
                                 ${tracks.length}
                             </span>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                             ${displayTracks.map(t => {
                                 const safeLink = t.album.external_urls.spotify;
+                                const safeTrackName = t.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                                
                                 return `
-                                <div class="track-row flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors">
+                                <div class="track-row flex items-center gap-2 bg-[#1f1f1f] p-1 rounded hover:bg-[#2a2a2a] transition-colors border border-transparent hover:border-gray-700">
                                     <a href="${safeLink}" target="_blank" rel="noopener noreferrer" 
-                                       class="flex-1 flex items-center gap-2 overflow-hidden"
+                                       class="flex-1 flex items-center gap-2 overflow-hidden px-2 py-1"
                                        title="Abrir Álbum">
-                                        <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs">●</span>
+                                        <span class="text-spotify-green text-xs">●</span>
                                         <div class="flex flex-col overflow-hidden">
-                                            <span class="truncate font-medium text-sm text-gray-300 group-hover:text-white">${t.name}</span>
-                                            <span class="text-xs text-gray-600 truncate">
+                                            <span class="truncate font-medium text-sm text-gray-200 hover:text-white transition-colors">${t.name}</span>
+                                            <span class="text-xs text-gray-500 truncate">
                                                 ${t.artists.map(a => a.name).join(', ')}
                                             </span>
                                         </div>
                                     </a>
                                     
                                     <button 
-                                        onclick="removeTrack('${t.id}', '${safeGenreName}', this)"
-                                        class="remove-btn text-gray-600 hover:text-red-500 p-2"
-                                        title="Remover deste gênero (não é este gênero)">
+                                        onclick="openModal('${t.id}', '${safeTrackName}', '${safeGenreName}', this)"
+                                        class="p-2 text-gray-500 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all flex-shrink-0"
+                                        title="Remover deste gênero">
                                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                                         </svg>
