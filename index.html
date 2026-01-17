@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Genre Ranker - Full Features</title>
+    <title>Spotify Playlist Genre Ranker</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -40,8 +40,8 @@
 <body class="min-h-screen p-4 md:p-8 relative">
     <div class="max-w-4xl mx-auto">
         <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span></h1>
-            <p class="text-gray-400">Exibindo do mais raro para o mais comum.</p>
+            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Playlist</span></h1>
+            <p class="text-gray-400">Analisando gêneros da playlist específica.</p>
         </header>
 
         <div id="auth-section" class="flex flex-col items-center justify-center gap-4">
@@ -63,7 +63,7 @@
 
         <div id="results-section" class="hidden">
             <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4 sticky top-0 bg-[#121212] z-10 py-4">
-                <h2 class="text-2xl font-semibold">Seu Ranking</h2>
+                <h2 class="text-2xl font-semibold">Ranking da Playlist</h2>
                 <div>
                     <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full mr-2"></span>
                     <button onclick="clearExclusions()" class="text-xs text-red-400 hover:text-red-300 underline">Resetar</button>
@@ -95,13 +95,17 @@
         // --- CONFIGURAÇÃO ---
         const CLIENT_ID = '3408b10d569b40cf8fe0ae4b56fe0c27'; 
         
+        // ID DA PLAYLIST SOLICITADA
+        const PLAYLIST_ID = '6vDGVr652ztNWKZuHckhwZ';
+
         let cleanPath = window.location.pathname;
         if (cleanPath.endsWith('index.html')) cleanPath = cleanPath.replace('index.html', '');
         if (!cleanPath.endsWith('/')) cleanPath += '/';
         const REDIRECT_URI = window.location.origin + cleanPath;
         
-        const SCOPES = 'user-library-read';
-        const EXCLUSION_KEY = 'spotify_ranker_exclusions';
+        // Scopes atualizados para ler playlists
+        const SCOPES = 'user-library-read playlist-read-private playlist-read-collaborative';
+        const EXCLUSION_KEY = 'spotify_ranker_playlist_exclusions'; // Chave única para não misturar com a outra versão
 
         // --- VARIÁVEIS DE ESTADO DO MODAL ---
         let currentRemovalData = null;
@@ -305,12 +309,14 @@
             throw new Error('Falha API Spotify.');
         }
 
+        // --- MUDANÇA PRINCIPAL AQUI: URL DA PLAYLIST ---
         async function fetchAllTracks(token) {
             let allTracks = [];
-            let url = 'https://api.spotify.com/v1/me/tracks?limit=50'; 
+            // Utilizando o endpoint de Playlists
+            let url = `https://api.spotify.com/v1/playlists/${PLAYLIST_ID}/tracks?limit=50`; 
             
             while (url) {
-                loadingText.innerText = `Baixando músicas... (${allTracks.length} encontradas)`;
+                loadingText.innerText = `Baixando playlist... (${allTracks.length} encontradas)`;
                 const data = await fetchWithRetry(url, token);
                 allTracks = allTracks.concat(data.items);
                 url = data.next; 
@@ -354,13 +360,16 @@
                 const items = await fetchAllTracks(token);
                 
                 if (items.length === 0) {
-                    loadingText.innerText = "Nenhuma música encontrada.";
+                    loadingText.innerText = "Nenhuma música encontrada nesta playlist.";
                     return;
                 }
 
                 document.getElementById('total-tracks').innerText = `${items.length} músicas analisadas`;
 
-                const allArtistIds = items.flatMap(item => 
+                // Filtra itens válidos (evita null ou episódios que não sejam 'track')
+                const validItems = items.filter(item => item.track && item.track.id);
+
+                const allArtistIds = validItems.flatMap(item => 
                     item.track.artists.map(artist => artist.id)
                 );
 
@@ -369,7 +378,7 @@
                 loadingText.innerText = "Calculando ranking...";
                 const genreStats = {}; 
 
-                items.forEach(item => {
+                validItems.forEach(item => {
                     const track = item.track;
                     const trackGenres = new Set();
                     track.artists.forEach(artist => {
@@ -406,7 +415,7 @@
                 sortedGenres.forEach(genreName => {
                     const tracks = genreStats[genreName];
                     
-                    // LÓGICA: Se o gênero tiver 0 músicas (após exclusão), não renderiza
+                    // LÓGICA: Se o gênero tiver 0 músicas, não renderiza
                     if (tracks.length === 0) return;
 
                     const genreDiv = document.createElement('div');
@@ -415,8 +424,7 @@
                     const displayTracks = tracks.slice(0, 20); 
                     const hasMore = tracks.length > 20;
                     
-                    // Escapes para segurança ao passar strings no HTML
-                    const safeGenreName = genreName.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                    const safeGenreName = genreName.replace(/'/g, "\\'").replace(/"/g, '"');
 
                     genreDiv.innerHTML = `
                         <div class="flex justify-between items-start mb-4">
@@ -427,8 +435,9 @@
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
                             ${displayTracks.map(t => {
+                                // Para playlists, o objeto Album é aninhado dentro de track
                                 const safeLink = t.album.external_urls.spotify;
-                                const safeTrackName = t.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                                const safeTrackName = t.name.replace(/'/g, "\\'").replace(/"/g, '"');
                                 
                                 return `
                                 <div class="track-row flex items-center gap-2 bg-[#1f1f1f] p-1 rounded hover:bg-[#2a2a2a] transition-colors border border-transparent hover:border-gray-700">
