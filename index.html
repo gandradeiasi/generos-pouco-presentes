@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Genre Ranker</title>
+    <title>Spotify Genre Ranker - Full Library</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -33,13 +33,18 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        /* Scrollbar customizada */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #121212; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #1DB954; }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
     <div class="max-w-4xl mx-auto">
         <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span></h1>
-            <p class="text-gray-400">Analise suas músicas salvas e descubra seus gêneros mais raros e comuns.</p>
+            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span> (Full)</h1>
+            <p class="text-gray-400">Analise TODAS as suas músicas salvas com detecção multi-artista.</p>
         </header>
 
         <div id="auth-section" class="flex flex-col items-center justify-center gap-4">
@@ -58,35 +63,30 @@
 
         <div id="loading-section" class="hidden flex-col items-center gap-4 py-12">
             <div class="loader"></div>
-            <p id="loading-text" class="text-lg">Conectando...</p>
+            <p id="loading-text" class="text-lg">Iniciando...</p>
+            <div class="w-full max-w-md bg-gray-800 rounded-full h-2.5 dark:bg-gray-700 mt-2 hidden" id="progress-container">
+                <div id="progress-bar" class="bg-spotify-green h-2.5 rounded-full" style="width: 0%"></div>
+            </div>
         </div>
 
         <div id="results-section" class="hidden">
-            <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4">
+            <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4 sticky top-0 bg-[#121212] z-10 py-4">
                 <h2 class="text-2xl font-semibold">Seu Ranking</h2>
                 <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full"></span>
             </div>
             
             <div id="genres-list" class="space-y-6">
-                <!-- Blocos de gêneros serão inseridos aqui -->
-            </div>
+                </div>
         </div>
     </div>
 
     <script>
         // --- CONFIGURAÇÃO ---
-        const CLIENT_ID = '3408b10d569b40cf8fe0ae4b56fe0c27';
+        const CLIENT_ID = '3408b10d569b40cf8fe0ae4b56fe0c27'; 
         
-        // --- CÁLCULO INTELIGENTE DA REDIRECT URI ---
-        // Remove 'index.html' se presente e garante que termina com '/'
-        // Isso evita erros de "Invalid Redirect URI" se o usuário acessar via url completa
         let cleanPath = window.location.pathname;
-        if (cleanPath.endsWith('index.html')) {
-            cleanPath = cleanPath.replace('index.html', '');
-        }
-        if (!cleanPath.endsWith('/')) {
-            cleanPath += '/';
-        }
+        if (cleanPath.endsWith('index.html')) cleanPath = cleanPath.replace('index.html', '');
+        if (!cleanPath.endsWith('/')) cleanPath += '/';
         const REDIRECT_URI = window.location.origin + cleanPath;
         
         const SCOPES = 'user-library-read';
@@ -101,7 +101,7 @@
         const redirectDisplay = document.getElementById('redirect-display');
         const errorMsg = document.getElementById('error-message');
 
-        // --- FUNÇÕES DE AUTH PKCE (MODERNO E SEGURO) ---
+        // --- AUTH (PKCE) ---
 
         function generateRandomString(length) {
             let text = '';
@@ -132,9 +132,8 @@
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
 
-            // Se tiver código na URL, troca pelo Token
             if (code) {
-                window.history.pushState("", document.title, window.location.pathname); // Limpa URL
+                window.history.pushState("", document.title, window.location.pathname);
                 await exchangeCodeForToken(code);
             }
         };
@@ -142,8 +141,6 @@
         loginBtn.onclick = async () => {
             const codeVerifier = generateRandomString(128);
             const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-            // Salva o verifier para usar depois do redirect
             localStorage.setItem('spotify_code_verifier', codeVerifier);
 
             const authUrl = new URL('https://accounts.spotify.com/authorize');
@@ -160,12 +157,11 @@
         async function exchangeCodeForToken(code) {
             authSection.classList.add('hidden');
             loadingSection.classList.remove('hidden');
-            loadingText.innerText = "Autenticando com segurança...";
+            loadingText.innerText = "Autenticando...";
 
             const codeVerifier = localStorage.getItem('spotify_code_verifier');
-
             if (!codeVerifier) {
-                showError("Erro: Verificador de código não encontrado. Tente recarregar a página e fazer login novamente.");
+                showError("Erro: Verificador ausente. Faça login novamente.");
                 loadingSection.classList.add('hidden');
                 authSection.classList.remove('hidden');
                 return;
@@ -184,11 +180,7 @@
                     }),
                 });
 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error_description || 'Falha na troca do token');
-                }
-
+                if (!response.ok) throw new Error('Falha na troca do token');
                 const data = await response.json();
                 startAnalysis(data.access_token);
 
@@ -204,15 +196,20 @@
             errorMsg.classList.remove('hidden');
         }
 
-        // --- LÓGICA DE DADOS (Igual à anterior) ---
+        // --- LÓGICA DE DADOS OTIMIZADA ---
 
-        async function fetchWithRetry(url, token, retries = 5, backoff = 1000) {
+        async function fetchWithRetry(url, token, retries = 3, backoff = 500) {
             for (let i = 0; i < retries; i++) {
                 try {
                     const response = await fetch(url, {
                         headers: { 'Authorization': `Bearer ${token}` }
                     });
                     if (response.ok) return await response.json();
+                    if (response.status === 429) { // Rate limit
+                        const retryAfter = response.headers.get('Retry-After') || 1;
+                        await new Promise(r => setTimeout(r, retryAfter * 1000));
+                        continue;
+                    }
                     if (response.status === 401) throw new Error("Token expirado.");
                 } catch (e) {
                     if (e.message.includes("Token")) throw e;
@@ -220,54 +217,108 @@
                 await new Promise(resolve => setTimeout(resolve, backoff));
                 backoff *= 2;
             }
-            throw new Error('Falha ao conectar com a API do Spotify.');
+            throw new Error('Falha API Spotify.');
+        }
+
+        // 1. Busca TODAS as músicas (Paginação)
+        async function fetchAllTracks(token) {
+            let allTracks = [];
+            let url = 'https://api.spotify.com/v1/me/tracks?limit=50'; // Max por request
+            
+            while (url) {
+                loadingText.innerText = `Baixando músicas... (${allTracks.length} encontradas)`;
+                const data = await fetchWithRetry(url, token);
+                allTracks = allTracks.concat(data.items);
+                url = data.next; // URL da próxima página ou null
+            }
+            return allTracks;
+        }
+
+        // 2. Busca Artistas em Lotes (Chunks de 50)
+        async function fetchArtistsInBatches(artistIds, token) {
+            const uniqueIds = [...new Set(artistIds)];
+            const chunks = [];
+            const chunkSize = 50; // Limite da API de artistas
+
+            for (let i = 0; i < uniqueIds.length; i += chunkSize) {
+                chunks.push(uniqueIds.slice(i, i + chunkSize));
+            }
+
+            let allArtists = [];
+            let processed = 0;
+
+            loadingText.innerText = `Analisando gêneros de ${uniqueIds.length} artistas...`;
+
+            // Processa chunks (limitando concorrência simples para não sobrecarregar)
+            for (const chunk of chunks) {
+                const response = await fetchWithRetry(`https://api.spotify.com/v1/artists?ids=${chunk.join(',')}`, token);
+                if (response.artists) {
+                    allArtists = allArtists.concat(response.artists);
+                }
+                processed += chunk.length;
+                loadingText.innerText = `Analisando gêneros... ${Math.round((processed/uniqueIds.length)*100)}%`;
+            }
+
+            const artistMap = {};
+            allArtists.forEach(a => {
+                if(a) artistMap[a.id] = a.genres;
+            });
+            return artistMap;
         }
 
         async function startAnalysis(token) {
             try {
-                loadingText.innerText = "Buscando suas músicas salvas...";
-                // Pega 50 músicas
-                const tracksData = await fetchWithRetry('https://api.spotify.com/v1/me/tracks?limit=50', token);
-                const items = tracksData.items;
-
-                if (!items || items.length === 0) {
+                // Passo 1: Pegar todas as músicas
+                const items = await fetchAllTracks(token);
+                
+                if (items.length === 0) {
                     loadingText.innerText = "Nenhuma música encontrada.";
                     return;
                 }
 
-                document.getElementById('total-tracks').innerText = `${items.length} últimas músicas`;
+                document.getElementById('total-tracks').innerText = `${items.length} músicas analisadas`;
 
-                // Pega Artistas
-                loadingText.innerText = "Analisando gêneros...";
-                const artistIds = [...new Set(items.map(item => item.track.artists[0].id))];
-                const artistsResponse = await fetchWithRetry(`https://api.spotify.com/v1/artists?ids=${artistIds.join(',')}`, token);
-                
-                const artistGenreMap = {};
-                artistsResponse.artists.forEach(artist => {
-                    artistGenreMap[artist.id] = artist.genres;
-                });
+                // Passo 2: Extrair TODOS os IDs de artistas (não só o principal)
+                const allArtistIds = items.flatMap(item => 
+                    item.track.artists.map(artist => artist.id)
+                );
 
-                // Calcula Ranking
+                // Passo 3: Buscar metadados dos artistas (gêneros)
+                const artistGenreMap = await fetchArtistsInBatches(allArtistIds, token);
+
+                // Passo 4: Calcular Ranking (Lógica Multi-Gênero)
+                loadingText.innerText = "Calculando ranking...";
                 const genreStats = {}; 
+
                 items.forEach(item => {
                     const track = item.track;
-                    const genres = artistGenreMap[track.artists[0].id] || [];
+                    
+                    // Coleta gêneros de TODOS os artistas da faixa
+                    const trackGenres = new Set();
+                    track.artists.forEach(artist => {
+                        const genres = artistGenreMap[artist.id];
+                        if (genres) {
+                            genres.forEach(g => trackGenres.add(g));
+                        }
+                    });
 
-                    if (genres.length === 0) {
+                    // Se o Set estiver vazio, é "Desconhecido"
+                    if (trackGenres.size === 0) {
                         const unknown = "Sem Gênero Definido";
                         if (!genreStats[unknown]) genreStats[unknown] = [];
                         genreStats[unknown].push(track);
                     } else {
-                        genres.forEach(genre => {
+                        // Adiciona a música em cada lista de gênero encontrada
+                        trackGenres.forEach(genre => {
                             if (!genreStats[genre]) genreStats[genre] = [];
                             genreStats[genre].push(track);
                         });
                     }
                 });
 
-                // Ordena e Renderiza
+                // Passo 5: Ordenar e Renderizar
                 const sortedGenres = Object.keys(genreStats).sort((a, b) => {
-                    return genreStats[a].length - genreStats[b].length;
+                    return genreStats[b].length - genreStats[a].length; // Maior para menor
                 });
 
                 loadingSection.classList.add('hidden');
@@ -279,22 +330,39 @@
                     const genreDiv = document.createElement('div');
                     genreDiv.className = 'genre-card p-6 rounded-xl border border-gray-800';
                     
+                    // Limita a exibição de prévias para não travar o DOM se houver 1000 musicas num genero
+                    const displayTracks = tracks.slice(0, 20); 
+                    const hasMore = tracks.length > 20;
+
                     genreDiv.innerHTML = `
                         <div class="flex justify-between items-start mb-4">
                             <h3 class="text-xl font-bold capitalize text-white">${genreName}</h3>
                             <span class="bg-spotify-green text-black text-xs font-black px-2 py-1 rounded">
-                                ${tracks.length} PT${tracks.length > 1 ? 'S' : 'O'}
+                                ${tracks.length}
                             </span>
                         </div>
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            ${tracks.map(t => `
-                                <a href="${t.external_urls.spotify}" target="_blank" class="text-sm text-gray-400 hover:text-white flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors">
-                                    <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity">▶</span>
-                                    <span class="truncate font-medium">${t.name}</span>
-                                    <span class="text-xs text-gray-600 truncate">• ${t.artists[0].name}</span>
+                            ${displayTracks.map(t => {
+                                // TENTATIVA DE NÃO TOCAR AUTOMATICAMENTE:
+                                // Linkamos para o ÁLBUM em vez da Track direta.
+                                // Isso abre o contexto sem dar play imediato na maioria dos casos.
+                                const safeLink = t.album.external_urls.spotify;
+                                
+                                return `
+                                <a href="${safeLink}" target="_blank" rel="noopener noreferrer" 
+                                   class="text-sm text-gray-400 hover:text-white flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors"
+                                   title="Abrir Álbum no Spotify">
+                                    <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity">◎</span>
+                                    <div class="flex flex-col overflow-hidden">
+                                        <span class="truncate font-medium">${t.name}</span>
+                                        <span class="text-xs text-gray-600 truncate">
+                                            ${t.artists.map(a => a.name).join(', ')}
+                                        </span>
+                                    </div>
                                 </a>
-                            `).join('')}
+                            `}).join('')}
                         </div>
+                        ${hasMore ? `<div class="mt-2 text-xs text-gray-500 italic">+ outras ${tracks.length - 20} músicas...</div>` : ''}
                     `;
                     genresList.appendChild(genreDiv);
                 });
