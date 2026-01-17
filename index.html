@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spotify Genre Ranker - Rarest First</title>
+    <title>Spotify Genre Ranker - Rarest First + Exclusions</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -37,13 +37,22 @@
         ::-webkit-scrollbar-track { background: #121212; }
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #1DB954; }
+
+        /* Estilo do botão de remover */
+        .remove-btn {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .track-row:hover .remove-btn {
+            opacity: 1;
+        }
     </style>
 </head>
 <body class="min-h-screen p-4 md:p-8">
     <div class="max-w-4xl mx-auto">
         <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span> (Invertido)</h1>
-            <p class="text-gray-400">Exibindo do menor (mais raro) para o maior (mais comum).</p>
+            <h1 class="text-4xl font-bold mb-4">Ranker de <span class="spotify-green">Gêneros</span></h1>
+            <p class="text-gray-400">Exibindo do mais raro para o mais comum.</p>
         </header>
 
         <div id="auth-section" class="flex flex-col items-center justify-center gap-4">
@@ -68,7 +77,10 @@
         <div id="results-section" class="hidden">
             <div class="flex justify-between items-center mb-8 border-b border-gray-800 pb-4 sticky top-0 bg-[#121212] z-10 py-4">
                 <h2 class="text-2xl font-semibold">Seu Ranking (Crescente)</h2>
-                <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full"></span>
+                <div>
+                    <span id="total-tracks" class="text-sm text-gray-500 bg-gray-900 px-3 py-1 rounded-full mr-2"></span>
+                    <button onclick="clearExclusions()" class="text-xs text-red-400 hover:text-red-300 underline">Resetar Exclusões</button>
+                </div>
             </div>
             
             <div id="genres-list" class="space-y-6">
@@ -86,6 +98,7 @@
         const REDIRECT_URI = window.location.origin + cleanPath;
         
         const SCOPES = 'user-library-read';
+        const EXCLUSION_KEY = 'spotify_ranker_exclusions';
 
         // Elementos DOM
         const authSection = document.getElementById('auth-section');
@@ -96,6 +109,44 @@
         const loginBtn = document.getElementById('login-btn');
         const redirectDisplay = document.getElementById('redirect-display');
         const errorMsg = document.getElementById('error-message');
+
+        // --- SISTEMA DE EXCLUSÃO (LOCAL STORAGE) ---
+        
+        function getExclusions() {
+            const stored = localStorage.getItem(EXCLUSION_KEY);
+            return stored ? new Set(JSON.parse(stored)) : new Set();
+        }
+
+        function addExclusion(trackId, genreName) {
+            const exclusions = getExclusions();
+            const key = `${trackId}|${genreName}`; // Chave única composta
+            exclusions.add(key);
+            localStorage.setItem(EXCLUSION_KEY, JSON.stringify([...exclusions]));
+            console.log(`Excluído: ${key}`);
+        }
+
+        function clearExclusions() {
+            if(confirm('Isso vai restaurar todas as músicas que você removeu dos gêneros. Deseja continuar?')) {
+                localStorage.removeItem(EXCLUSION_KEY);
+                location.reload();
+            }
+        }
+
+        // Função chamada pelo botão na UI
+        window.removeTrack = (trackId, genreName, btnElement) => {
+            // 1. Salva no storage
+            addExclusion(trackId, genreName);
+
+            // 2. Remove visualmente a linha
+            const row = btnElement.closest('.track-row');
+            const card = btnElement.closest('.genre-card');
+            row.remove();
+
+            // 3. Atualiza o contador visualmente
+            const counterEl = card.querySelector('.genre-count');
+            let currentCount = parseInt(counterEl.innerText);
+            counterEl.innerText = Math.max(0, currentCount - 1);
+        };
 
         // --- AUTH (PKCE) ---
         function generateRandomString(length) {
@@ -259,6 +310,9 @@
 
         async function startAnalysis(token) {
             try {
+                // Carregar exclusões salvas
+                const exclusions = getExclusions();
+
                 const items = await fetchAllTracks(token);
                 
                 if (items.length === 0) {
@@ -287,23 +341,27 @@
                         }
                     });
 
+                    // Helper para processar adição
+                    const processGenre = (genreName) => {
+                        // VERIFICAÇÃO DE EXCLUSÃO
+                        const key = `${track.id}|${genreName}`;
+                        if (exclusions.has(key)) return; // Pula se estiver na lista negra
+
+                        if (!genreStats[genreName]) genreStats[genreName] = [];
+                        genreStats[genreName].push(track);
+                    };
+
                     if (trackGenres.size === 0) {
-                        const unknown = "Sem Gênero Definido";
-                        if (!genreStats[unknown]) genreStats[unknown] = [];
-                        genreStats[unknown].push(track);
+                        processGenre("Sem Gênero Definido");
                     } else {
-                        trackGenres.forEach(genre => {
-                            if (!genreStats[genre]) genreStats[genre] = [];
-                            genreStats[genre].push(track);
-                        });
+                        trackGenres.forEach(genre => processGenre(genre));
                     }
                 });
 
-                // --- ALTERAÇÃO AQUI: ORDENAÇÃO CRESCENTE (MENOR -> MAIOR) ---
+                // Ordenação Crescente (Raro -> Comum)
                 const sortedGenres = Object.keys(genreStats).sort((a, b) => {
                     return genreStats[a].length - genreStats[b].length; 
                 });
-                // ------------------------------------------------------------
 
                 loadingSection.classList.add('hidden');
                 resultsSection.classList.remove('hidden');
@@ -311,16 +369,21 @@
 
                 sortedGenres.forEach(genreName => {
                     const tracks = genreStats[genreName];
+                    if (tracks.length === 0) return; // Não exibe se todas as músicas foram excluídas
+
                     const genreDiv = document.createElement('div');
                     genreDiv.className = 'genre-card p-6 rounded-xl border border-gray-800';
                     
                     const displayTracks = tracks.slice(0, 20); 
                     const hasMore = tracks.length > 20;
 
+                    // Escapa aspas simples para não quebrar o JS inline
+                    const safeGenreName = genreName.replace(/'/g, "\\'");
+
                     genreDiv.innerHTML = `
                         <div class="flex justify-between items-start mb-4">
                             <h3 class="text-xl font-bold capitalize text-white">${genreName}</h3>
-                            <span class="bg-spotify-green text-black text-xs font-black px-2 py-1 rounded">
+                            <span class="bg-spotify-green text-black text-xs font-black px-2 py-1 rounded genre-count">
                                 ${tracks.length}
                             </span>
                         </div>
@@ -328,17 +391,28 @@
                             ${displayTracks.map(t => {
                                 const safeLink = t.album.external_urls.spotify;
                                 return `
-                                <a href="${safeLink}" target="_blank" rel="noopener noreferrer" 
-                                   class="text-sm text-gray-400 hover:text-white flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors"
-                                   title="Abrir Álbum">
-                                    <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity">◎</span>
-                                    <div class="flex flex-col overflow-hidden">
-                                        <span class="truncate font-medium">${t.name}</span>
-                                        <span class="text-xs text-gray-600 truncate">
-                                            ${t.artists.map(a => a.name).join(', ')}
-                                        </span>
-                                    </div>
-                                </a>
+                                <div class="track-row flex items-center gap-2 group p-1 rounded hover:bg-gray-800 transition-colors">
+                                    <a href="${safeLink}" target="_blank" rel="noopener noreferrer" 
+                                       class="flex-1 flex items-center gap-2 overflow-hidden"
+                                       title="Abrir Álbum">
+                                        <span class="text-green-500 opacity-0 group-hover:opacity-100 transition-opacity text-xs">●</span>
+                                        <div class="flex flex-col overflow-hidden">
+                                            <span class="truncate font-medium text-sm text-gray-300 group-hover:text-white">${t.name}</span>
+                                            <span class="text-xs text-gray-600 truncate">
+                                                ${t.artists.map(a => a.name).join(', ')}
+                                            </span>
+                                        </div>
+                                    </a>
+                                    
+                                    <button 
+                                        onclick="removeTrack('${t.id}', '${safeGenreName}', this)"
+                                        class="remove-btn text-gray-600 hover:text-red-500 p-2"
+                                        title="Remover deste gênero (não é este gênero)">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
                             `}).join('')}
                         </div>
                         ${hasMore ? `<div class="mt-2 text-xs text-gray-500 italic">+ outras ${tracks.length - 20} músicas...</div>` : ''}
