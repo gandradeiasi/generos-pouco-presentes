@@ -309,7 +309,6 @@
             throw new Error('Falha API Spotify.');
         }
 
-        // --- MUDANÇA PRINCIPAL AQUI: URL DA PLAYLIST ---
         async function fetchAllTracks(token) {
             let allTracks = [];
             // Utilizando o endpoint de Playlists
@@ -415,13 +414,18 @@
                 sortedGenres.forEach(genreName => {
                     const tracks = genreStats[genreName];
                     
-                    // LÓGICA: Se o gênero tiver 0 músicas, não renderiza
                     if (tracks.length === 0) return;
+
+                    // --- AJUSTE PARA EMBARALHAR (RANDOMIZAR) AS MÚSICAS ---
+                    // Cria uma cópia da lista e embaralha aleatoriamente
+                    const shuffledTracks = [...tracks].sort(() => Math.random() - 0.5);
+                    // --------------------------------------------------------
 
                     const genreDiv = document.createElement('div');
                     genreDiv.className = 'genre-card p-6 rounded-xl border border-gray-800';
                     
-                    const displayTracks = tracks.slice(0, 20); 
+                    // Usa a lista embaralhada para pegar as 20 primeiras
+                    const displayTracks = shuffledTracks.slice(0, 20); 
                     const hasMore = tracks.length > 20;
                     
                     const safeGenreName = genreName.replace(/'/g, "\\'").replace(/"/g, '"');
